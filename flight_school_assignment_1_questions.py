@@ -81,7 +81,7 @@ spark.sql(f"USE {database_name}")
 
 dataPath = f"dbfs:/FileStore/flight/{team_name}/assignment_1_ingest.csv"
 
-df = 
+df = spark.read.format("csv").option("header", "true").option("inferSchema", "true").load(dataPath)
 #
 # TO DO - Read the data from dataPath into a dataframe
 # NOTES:
@@ -105,7 +105,7 @@ df.createOrReplaceTempView("tmp")
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT -- TO DO... Select all the distinct values from the device_operational_status column
+# MAGIC SELECT DISTINCT device_operational_status-- TO DO... Select all the distinct values from the device_operational_status column
 # MAGIC FROM tmp
 
 # COMMAND ----------
@@ -115,7 +115,7 @@ df.createOrReplaceTempView("tmp")
 
 dataPath = f"dbfs:/FileStore/flight/{team_name}/assignment_1_backfill.csv"
 
-df_backfill = 
+df_backfill = spark.read.format("csv").option("header", "true").load(dataPath)
 #
 # TO DO - Read the data from dataPath into a dataframe
 # NOTES:
@@ -216,6 +216,9 @@ df_backfill.createOrReplaceTempView("historical_bronze_backfill_vw")
 # MAGIC DROP TABLE IF EXISTS sensor_readings_historical_bronze;
 # MAGIC 
 # MAGIC CREATE TABLE sensor_readings_historical_bronze
+# MAGIC USING DELTA
+# MAGIC AS (SELECT * FROM historical_bronze_vw)
+# MAGIC 
 # MAGIC --
 # MAGIC -- TO DO... create a DELTA LAKE table from historical_bronze_vw.  Use the CREATE TABLE ... AS... syntax
 # MAGIC --
@@ -232,7 +235,7 @@ df_backfill.createOrReplaceTempView("historical_bronze_backfill_vw")
 # MAGIC %sql
 # MAGIC -- Let's count the records in the Bronze table
 # MAGIC 
-# MAGIC SELECT COUNT(*) FROM sensor_readings_historical_bronze
+# MAGIC SELECT COUNT(*) AS ReadingCount FROM sensor_readings_historical_bronze
 
 # COMMAND ----------
 
@@ -242,10 +245,11 @@ df_backfill.createOrReplaceTempView("historical_bronze_backfill_vw")
 # MAGIC -- Experiment with different graphical views... be creative!
 # MAGIC 
 # MAGIC SELECT 
-# MAGIC -- TO DO
+# MAGIC device_operational_status AS DeviceStatus,
+# MAGIC COUNT(id) AS RecordCount
 # MAGIC FROM sensor_readings_historical_bronze
-# MAGIC GROUP BY -- TO DO
-# MAGIC ORDER BY -- TO DO
+# MAGIC GROUP BY device_operational_status
+# MAGIC ORDER BY RecordCount DESC;
 
 # COMMAND ----------
 
@@ -292,20 +296,20 @@ df_backfill.createOrReplaceTempView("historical_bronze_backfill_vw")
 # MAGIC   reading_3
 # MAGIC FROM sensor_readings_historical_bronze
 # MAGIC WHERE 
-# MAGIC   device_id = -- use the getArgument function to grab values from the appropriate widget we defined above
+# MAGIC   device_id = getArgument("PARAM_DEVICE_ID")
 # MAGIC   AND
-# MAGIC   YEAR(reading_time) = -- use the getArgument function to grab values from the appropriate widget we defined above
+# MAGIC   YEAR(reading_time) = getArgument("PARAM_YEAR")
 # MAGIC   AND
-# MAGIC   MONTH(reading_time) = -- use the getArgument function to grab values from the appropriate widget we defined above
+# MAGIC   MONTH(reading_time) = getArgument("PARAM_MONTH")
 # MAGIC   AND
-# MAGIC   DAY(reading_time) = -- use the getArgument function to grab values from the appropriate widget we defined above
+# MAGIC   DAY(reading_time) = getArgument("PARAM_DAY")
 # MAGIC   AND 
-# MAGIC   HOUR(reading_time) = -- use the getArgument function to grab values from the appropriate widget we defined above
+# MAGIC   HOUR(reading_time) = getArgument("PARAM_HOUR")
 # MAGIC   AND
-# MAGIC   MINUTE(reading_time) = -- use the getArgument function to grab values from the appropriate widget we defined above
+# MAGIC   MINUTE(reading_time) = getArgument("PARAM_MINUTE")
 # MAGIC   AND 
-# MAGIC   SECOND(reading_time) BETWEEN -- use the getArgument function to grab values from the appropriate widget we defined above 
-# MAGIC     AND -- use the getArgument function to grab values from the appropriate widget we defined above
+# MAGIC   SECOND(reading_time) BETWEEN getArgument("PARAM_START_SECOND")
+# MAGIC     AND getArgument("PARAM_END_SECOND")
 # MAGIC ORDER BY reading_time ASC
 
 # COMMAND ----------
@@ -357,10 +361,9 @@ df_backfill.createOrReplaceTempView("historical_bronze_backfill_vw")
 # MAGIC 
 # MAGIC DROP TABLE IF EXISTS sensor_readings_historical_silver;
 # MAGIC 
-# MAGIC CREATE TABLE sensor_readings_historical_silver 
-# MAGIC --
-# MAGIC -- TO DO... create a DELTA LAKE Silver table.  Use historical_bronze_vw as a starting point.  Use the CREATE TABLE ... AS... syntax
-# MAGIC --
+# MAGIC CREATE TABLE sensor_readings_historical_silver
+# MAGIC USING DELTA
+# MAGIC AS (SELECT * FROM historical_bronze_vw);
 
 # COMMAND ----------
 
@@ -373,35 +376,50 @@ df_backfill.createOrReplaceTempView("historical_bronze_backfill_vw")
 # COMMAND ----------
 
 # MAGIC %sql
+# MAGIC 
+# MAGIC SELECT * FROM historical_bronze_backfill_vw
+
+# COMMAND ----------
+
+# MAGIC %sql
 # MAGIC -- Let's merge in the Bronze backfill data
 # MAGIC -- MERGE INTO is one of the most important differentiators for Delta Lake
 # MAGIC -- The entire backfill batch will be treated as an atomic transaction,
 # MAGIC -- and we can do both inserts and updates within a single batch.
 # MAGIC 
-# MAGIC MERGE INTO sensor_readings_historical_silver AS -- TO DO... "AS" what?
-# MAGIC USING historical_bronze_backfill_vw AS -- TO DO... "AS" what?
+# MAGIC MERGE INTO sensor_readings_historical_silver AS target
+# MAGIC USING historical_bronze_backfill_vw AS source
 # MAGIC ON 
-# MAGIC   -- TO DO... "ON" what?
-# MAGIC WHEN MATCHED THEN -- TO DO... what?
-# MAGIC WHEN NOT MATCHED THEN -- TO DO... what?
+# MAGIC   source.id = target.id
+# MAGIC WHEN MATCHED THEN 
+# MAGIC UPDATE 
+# MAGIC SET *
+# MAGIC WHEN NOT MATCHED THEN INSERT *
 
 # COMMAND ----------
 
-# MAGIC %sql
-# MAGIC -- Verify that the upserts worked correctly.
-# MAGIC -- Newly inserted records have dates of 2015-02-21 (and id value beginning with 'ZZZ')
-# MAGIC -- Updated records have id's in the backfill data that do NOT begin with 'ZZZ'.  
-# MAGIC -- Check a few of these, and make sure that a tiny value was added to reading_1.
-# MAGIC -- In order to check, you might try something similar to...
-# MAGIC -- %sql
-# MAGIC -- select count(*)
-# MAGIC -- from sensor_readings_historical_silver a
-# MAGIC -- inner join sensor_readings_historical_bronze b
-# MAGIC -- on a.id = b.id
-# MAGIC -- where a.reading_1 <> b.reading_1
+# MAGIC %sql 
+# MAGIC -- # -- Verify that the upserts worked correctly.
+# MAGIC -- # -- Newly inserted records have dates of 2015-02-21 (and id value beginning with 'ZZZ')
+# MAGIC -- # -- Updated records have id's in the backfill data that do NOT begin with 'ZZZ'.
+# MAGIC -- # -- Check a few of these, and make sure that a tiny value was added to reading_1.
+# MAGIC -- # -- In order to check, you might try something similar to...
 # MAGIC 
-# MAGIC SELECT * FROM sensor_readings_historical_silver
-# MAGIC ORDER BY reading_time ASC
+# MAGIC select
+# MAGIC   count(*)
+# MAGIC from
+# MAGIC   sensor_readings_historical_silver a
+# MAGIC   join sensor_readings_historical_bronze b 
+# MAGIC     on a.id = b.id
+# MAGIC where
+# MAGIC   a.reading_1 != b.reading_1
+# MAGIC   and a.reading_time = '2015-02-21'
+# MAGIC   and a.id not like 'ZZZ%'
+# MAGIC -- order by
+# MAGIC --   a.reading_time 
+# MAGIC   
+# MAGIC -- # SELECT * FROM sensor_readings_historical_silver
+# MAGIC -- # ORDER BY reading_time ASC
 
 # COMMAND ----------
 
@@ -477,10 +495,15 @@ df_backfill.createOrReplaceTempView("historical_bronze_backfill_vw")
 
 # COMMAND ----------
 
-# MAGIC %sql
-# MAGIC -- Now use MERGE INTO to update the historical table
-# MAGIC 
-# MAGIC -- TO DO... you've already worked with MERGE INTO, so you should be able to write this one from scratch!
+# MAGIC %sql -- Now use MERGE INTO to update the historical table
+# MAGIC MERGE INTO sensor_readings_historical_silver AS target USING sensor_readings_historical_interpolations AS source ON source.id = target.id
+# MAGIC WHEN MATCHED
+# MAGIC THEN
+# MAGIC UPDATE
+# MAGIC SET
+# MAGIC   target.reading_1 = source.reading_1,
+# MAGIC   target.reading_2 = source.reading_2,
+# MAGIC   target.reading_3 = source.reading_3
 
 # COMMAND ----------
 
@@ -500,17 +523,10 @@ df_backfill.createOrReplaceTempView("historical_bronze_backfill_vw")
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- List all the versions of the table that are available to us
-# MAGIC 
-# MAGIC DESCRIBE HISTORY sensor_readings_historical_silver
-
-# COMMAND ----------
-
-# MAGIC %sql
 # MAGIC -- Ah, version 1 should have the 999.99 values
 # MAGIC 
 # MAGIC SELECT * 
-# MAGIC FROM sensor_readings_historical_silver -- TO DO... how can you specify the time travel?
+# MAGIC FROM sensor_readings_historical_silver version AS OF 1
 # MAGIC WHERE reading_1 = 999.99
 
 # COMMAND ----------
@@ -547,14 +563,22 @@ dbutils.fs.ls(f"dbfs:/user/hive/warehouse/{database_name}.db/sensor_readings_his
 
 # COMMAND ----------
 
-# MAGIC %sql
-# MAGIC -- Let's create a Silver table partitioned by Device. 
+# MAGIC %sql -- Let's create a Silver table partitioned by Device.
 # MAGIC -- Create a new table, so we can compare new and old
 # MAGIC 
 # MAGIC DROP TABLE IF EXISTS sensor_readings_historical_silver_by_device;
 # MAGIC 
-# MAGIC CREATE TABLE sensor_readings_historical_silver_by_device 
-# MAGIC -- TO DO... Create a new Delta Lake table, partitioned by device_id
+# MAGIC CREATE TABLE IF NOT EXISTS sensor_readings_historical_silver_by_device
+# MAGIC   USING DELTA
+# MAGIC   PARTITIONED BY (device_id)
+# MAGIC   AS (SELECT * FROM sensor_readings_historical_silver)
+# MAGIC 
+# MAGIC 
+# MAGIC -- DROP TABLE IF EXISTS sensor_readings_historical_silver_by_device;
+# MAGIC -- CREATE TABLE sensor_readings_historical_silver_by_device
+# MAGIC --   AS (SELECT * FROM sensor_readings_historical_silver)
+# MAGIC --   USING DELTA
+# MAGIC --   PARTITIONED BY (device_id)
 
 # COMMAND ----------
 
@@ -581,7 +605,11 @@ dbutils.fs.ls(f"dbfs:/user/hive/warehouse/{database_name}.db/sensor_readings_his
 # MAGIC 
 # MAGIC CREATE TABLE sensor_readings_historical_silver_by_hour 
 # MAGIC USING DELTA
-# MAGIC -- TO DO... create the table with correct partitioning
+# MAGIC PARTITIONED BY (date_reading_time, hour_reading_time)
+# MAGIC AS (SELECT ss.*,
+# MAGIC     DATE(reading_time) AS date_reading_time, 
+# MAGIC     HOUR(reading_time) AS hour_reading_time 
+# MAGIC     FROM sensor_readings_historical_silver ss);
 
 # COMMAND ----------
 
@@ -599,7 +627,12 @@ dbutils.fs.ls(f"dbfs:/user/hive/warehouse/{database_name}.db/sensor_readings_his
 # MAGIC 
 # MAGIC CREATE TABLE sensor_readings_historical_silver_by_hour_and_minute 
 # MAGIC USING DELTA
-# MAGIC -- TO DO... create the table
+# MAGIC PARTITIONED BY (date_reading_time, hour_reading_time, minute_reading_time)
+# MAGIC AS (SELECT ss.*,
+# MAGIC     DATE(reading_time) AS date_reading_time,
+# MAGIC     HOUR(reading_time) AS hour_reading_time, 
+# MAGIC     MINUTE(reading_time) AS minute_reading_time 
+# MAGIC     FROM sensor_readings_historical_silver ss);
 
 # COMMAND ----------
 
@@ -657,4 +690,33 @@ dbutils.fs.ls(f"dbfs:/user/hive/warehouse/{database_name}.db/sensor_readings_his
 # MAGIC We haven't been able to touch on every feature of Delta Lake.  If time permits, demonstrate another important capability... like Schema Enforcement, or ACID behavior, or Z-Ordering, etc.
 
 # COMMAND ----------
+
+# MAGIC %sql
+# MAGIC 
+# MAGIC 
+# MAGIC SELECT 
+# MAGIC     ff.*,
+# MAGIC     33 as threshold,
+# MAGIC     avg(`reading_1`) OVER ( PARTITION BY device_type
+# MAGIC             ORDER BY `reading_time`
+# MAGIC             ROWS BETWEEN
+# MAGIC               30 PRECEDING AND
+# MAGIC               CURRENT ROW
+# MAGIC           ) AS TempShortMovingAverage,
+# MAGIC 
+# MAGIC     avg(`reading_1`) OVER ( PARTITION BY device_type
+# MAGIC             ORDER BY `reading_time`
+# MAGIC             ROWS BETWEEN
+# MAGIC               90 PRECEDING AND
+# MAGIC               CURRENT ROW
+# MAGIC           ) AS TempLongMovingAverage
+# MAGIC     FROM sensor_readings_historical_silver_by_hour_and_minute ff
+# MAGIC 
+# MAGIC 
+# MAGIC 
+# MAGIC --GROUP BY -- TO DO
+# MAGIC --ORDER BY -- TO DO
+
+# COMMAND ----------
+
 
